@@ -1,4 +1,4 @@
-const CACHE = "late-arrival-shell-v2";
+const CACHE = "late-arrival-shell-v3";
 const SHELL = ["./manifest.json"];
 
 self.addEventListener("install", e => {
