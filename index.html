@@ -185,6 +185,32 @@
   .fixbar .inner{max-width:640px; margin:0 auto;}
   details.browse summary{font-weight:800; color:var(--teal-dark); cursor:pointer; font-size:14px;}
   .toast{bottom:96px;}
+
+  /* ===== الإحصائيات ===== */
+  .tab-btn{padding:10px 4px; font-size:12.5px;}
+  .stat-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin:10px 0 4px;}
+  .stat-box{border:1.5px solid var(--line); border-radius:12px; padding:10px 6px; text-align:center; background:#fff;}
+  .stat-box b{display:block; font-size:21px; color:var(--teal-dark); line-height:1.3;}
+  .stat-box span{font-size:11.5px; color:var(--muted); font-weight:600;}
+  .sec-title{font-size:14.5px; font-weight:800; color:var(--teal-dark); margin:0 0 8px;}
+  .insight{font-size:12.5px; line-height:1.7; background:color-mix(in srgb, var(--amber) 11%, white); border:1px solid color-mix(in srgb, var(--amber) 35%, white); border-radius:10px; padding:8px 11px; margin:0 0 10px;}
+  .st-row{border:1.5px solid var(--line); border-radius:12px; padding:10px 12px; background:#fff; margin-bottom:8px;}
+  .st-row.tap{cursor:pointer;}
+  .st-top{display:flex; align-items:center; gap:8px;}
+  .st-top .nm{flex:1; font-weight:700; font-size:14px; line-height:1.4;}
+  .st-top .nm small{display:block; font-size:11.5px; color:var(--muted); font-weight:600;}
+  .st-sub{font-size:12px; color:var(--muted); margin-top:5px; line-height:1.6;}
+  .st-num{font-weight:800; font-size:15px; color:var(--teal-dark); white-space:nowrap;}
+  .bar-track{height:8px; background:var(--line); border-radius:99px; margin-top:7px; overflow:hidden;}
+  .bar-fill{height:100%; background:var(--teal); border-radius:99px; min-width:2px;}
+  .bar-fill.hot{background:var(--red);}
+  .pill{font-size:11px; font-weight:800; padding:2px 9px; border-radius:999px; white-space:nowrap;}
+  .pill.red{background:rgba(179,65,58,.12); color:var(--red);}
+  .pill.amber{background:rgba(200,134,42,.15); color:var(--amber);}
+  .rank{width:24px; height:24px; border-radius:50%; background:var(--teal); color:#fff; font-size:12px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  .dates{margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;}
+  .dates span{font-size:11.5px; font-weight:700; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:3px 8px; color:var(--ink);}
+  .more-btn{width:100%; padding:10px; border-radius:10px; border:1.5px dashed var(--teal); background:#fff; color:var(--teal-dark); font-family:inherit; font-size:13px; font-weight:700; cursor:pointer;}
 </style>
 </head>
 <body>
@@ -226,6 +252,7 @@
   <div class="tabs">
     <button class="tab-btn active" id="tabEntry" type="button">تسجيل</button>
     <button class="tab-btn" id="tabToday" type="button">سجل اليوم</button>
+    <button class="tab-btn" id="tabStats" type="button">إحصائيات</button>
     <button class="tab-btn" id="tabReport" type="button">كشف رسمي</button>
   </div>
 
@@ -299,6 +326,29 @@
       <div id="todayEmpty" class="empty-note" style="display:none;">لا توجد حالات تأخر مسجّلة اليوم بعد.</div>
       <div id="todayLoading" class="hint" style="text-align:center; display:none;">جارٍ التحميل...</div>
     </div>
+  </section>
+
+  <section id="viewStats" style="display:none;">
+    <div class="card">
+      <label class="fld-label" for="selStatsRange">📊 إحصائيات التأخر الصباحي — الفترة</label>
+      <select id="selStatsRange">
+        <option value="all">كل العام الدراسي الحالي</option>
+        <option value="30">آخر 30 يومًا</option>
+        <option value="7">آخر 7 أيام</option>
+        <option value="today">اليوم فقط</option>
+        <option value="custom">فترة مخصصة...</option>
+      </select>
+      <div id="statsCustom" style="display:none; margin-top:10px;">
+        <div class="fld" style="margin-bottom:8px;"><label class="fld-label">من تاريخ</label><input type="date" id="inpStatsFrom"></div>
+        <div class="fld" style="margin-bottom:0;"><label class="fld-label">إلى تاريخ</label><input type="date" id="inpStatsTo"></div>
+      </div>
+      <div class="toolbar" style="margin-top:10px; margin-bottom:0;">
+        <button class="ghostbtn" type="button" id="btnStatsRefresh">↻ تحديث الإحصائيات</button>
+      </div>
+      <div class="hint" id="statsPeriodHint"></div>
+    </div>
+    <div id="statsLoading" class="hint" style="text-align:center; display:none;">جارٍ تحميل الإحصائيات...</div>
+    <div id="statsBody"></div>
   </section>
 
   <section id="viewReport" style="display:none;">
@@ -974,16 +1024,256 @@ async function printAllSheets(){
   }
 }
 
+
+/* ===================== الإحصائيات ===================== */
+let statsCache = null;           // نتيجة الحساب الأخيرة
+const statsUI = { showAllClasses:false, showAllStudents:false, minCount:3 };
+
+function el(tag, cls, text){
+  const e = document.createElement(tag);
+  if(cls) e.className = cls;
+  if(text != null) e.textContent = text;
+  return e;
+}
+function fmtShortDate(iso){
+  const p = iso.split("-");
+  const d = new Date(Number(p[0]), Number(p[1])-1, Number(p[2]));
+  return ARABIC_DAYS[d.getDay()] + " " + Number(p[2]) + "/" + Number(p[1]);
+}
+function pct(a, b){ return b ? Math.round(a * 100 / b) : 0; }
+function avg(a, b){ return b ? (a / b).toFixed(2).replace(/\.?0+$/, "") : "0"; }
+
+async function fetchAllLate(from, to){
+  const out = [], PAGE = 1000;
+  for(let off = 0; off < 50000; off += PAGE){
+    let url = SUPABASE_URL + "/rest/v1/late_arrivals?select=student_id,student_name,class,vdate,is_prior_year"
+      + "&order=vdate.asc,id.asc&limit=" + PAGE + "&offset=" + off;
+    if(from) url += "&vdate=gte." + from;
+    if(to) url += "&vdate=lte." + to;
+    const res = await fetch(url, { headers: HDRS });
+    if(!res.ok) throw new Error(await res.text());
+    const rows = await res.json();
+    out.push(...rows);
+    if(rows.length < PAGE) break;
+  }
+  return out;
+}
+
+function statsRange(){
+  const v = $("selStatsRange").value;
+  const iso = localISO(new Date());
+  const back = n => { const d = new Date(); d.setDate(d.getDate() - n); return localISO(d); };
+  if(v === "today") return { from: iso, to: iso, label: "اليوم (" + fmtDMY(iso) + ")" };
+  if(v === "7") return { from: back(6), to: iso, label: "من " + fmtDMY(back(6)) + " إلى " + fmtDMY(iso) };
+  if(v === "30") return { from: back(29), to: iso, label: "من " + fmtDMY(back(29)) + " إلى " + fmtDMY(iso) };
+  if(v === "custom"){
+    const f = $("inpStatsFrom").value || null, t = $("inpStatsTo").value || null;
+    return { from: f, to: t, label: (f ? "من " + fmtDMY(f) : "من البداية") + " " + (t ? "إلى " + fmtDMY(t) : "حتى اليوم") };
+  }
+  return { from: null, to: null, label: "كل السجلات الخاصة بالعام الدراسي الحالي" };
+}
+
+function computeStats(rows){
+  const stu = new Map(), days = new Set();
+  rows.forEach(r => {
+    if(r.is_prior_year === true) return;           // طلاب العام الماضي لا تدخل في الإحصاء
+    const k = nid(r.student_id) || ("n:" + normAr(r.student_name));
+    let s = stu.get(k);
+    if(!s){
+      const cur = STUDENT_BY_NID.get(nid(r.student_id));
+      let grade, sec;
+      if(cur){ grade = cur.grade; sec = cur.sec; }
+      else { const m = String(r.class||"").split(" - "); grade = (m[0]||"").trim(); sec = (m[1]||"").trim(); }
+      s = { key:k, name:r.student_name, grade, sec,
+            label: (grade && sec) ? (grade + " - " + sec) : (r.class || "غير محدد"),
+            count:0, dates:[] };
+      stu.set(k, s);
+    }
+    s.count++; s.dates.push(r.vdate); days.add(r.vdate);
+  });
+  const students = [...stu.values()];
+  const total = students.reduce((a, s) => a + s.count, 0);
+
+  const gradeMap = new Map(), classMap = new Map();
+  STUDENT_IDX.forEach(s => {
+    if(!gradeMap.has(s.grade)) gradeMap.set(s.grade, { name:s.grade, count:0, late:0, size:0 });
+    gradeMap.get(s.grade).size++;
+    if(!classMap.has(s.label)) classMap.set(s.label, { label:s.label, grade:s.grade, count:0, late:0, size:0 });
+    classMap.get(s.label).size++;
+  });
+  students.forEach(s => {
+    const gk = s.grade || "غير محدد";
+    if(!gradeMap.has(gk)) gradeMap.set(gk, { name:gk, count:0, late:0, size:0 });
+    const g = gradeMap.get(gk); g.count += s.count; g.late++;
+    if(!classMap.has(s.label)) classMap.set(s.label, { label:s.label, grade:gk, count:0, late:0, size:0 });
+    const cl = classMap.get(s.label); cl.count += s.count; cl.late++;
+  });
+  const order = ["الأول متوسط","الثاني متوسط","الثالث متوسط"];
+  const grades = [...gradeMap.values()].sort((a,b) => b.count - a.count || order.indexOf(a.name) - order.indexOf(b.name));
+  const classes = [...classMap.values()].sort((a,b) => b.count - a.count || a.label.localeCompare(b.label, "ar"));
+  students.forEach(s => s.dates.sort());
+  students.sort((a,b) => b.count - a.count
+    || (b.dates[b.dates.length-1] || "").localeCompare(a.dates[a.dates.length-1] || "")
+    || a.name.localeCompare(b.name, "ar"));
+  return { total, studentsCount: students.length, daysCount: days.size, grades, classes, students };
+}
+
+async function loadStats(){
+  const rg = statsRange();
+  $("statsPeriodHint").textContent = "الفترة: " + rg.label;
+  $("statsLoading").style.display = "block";
+  $("statsBody").innerHTML = "";
+  try{
+    const rows = await fetchAllLate(rg.from, rg.to);
+    statsCache = computeStats(rows);
+    $("statsLoading").style.display = "none";
+    renderStats();
+  }catch(e){
+    console.error(e);
+    $("statsLoading").style.display = "none";
+    const b = $("statsBody");
+    b.innerHTML = "";
+    b.appendChild(el("div", "empty-note", "تعذّر تحميل الإحصائيات، تحقق من الاتصال ثم اضغط تحديث."));
+  }
+}
+
+function barRow(rank, title, sub, numText, ratio, hot, pillText, pillCls){
+  const row = el("div", "st-row");
+  const top = el("div", "st-top");
+  if(rank != null) top.appendChild(el("span", "rank", rank));
+  const nm = el("div", "nm", title);
+  top.appendChild(nm);
+  if(pillText) top.appendChild(el("span", "pill " + pillCls, pillText));
+  top.appendChild(el("span", "st-num", numText));
+  row.appendChild(top);
+  const tr = el("div", "bar-track");
+  const f = el("div", "bar-fill" + (hot ? " hot" : ""));
+  f.style.width = Math.max(0, Math.min(100, ratio * 100)) + "%";
+  tr.appendChild(f);
+  row.appendChild(tr);
+  if(sub) row.appendChild(el("div", "st-sub", sub));
+  return row;
+}
+
+function renderStats(){
+  const S = statsCache, body = $("statsBody");
+  body.innerHTML = "";
+  if(!S) return;
+  if(S.total === 0){
+    const card = el("div", "card");
+    card.appendChild(el("div", "empty-note", "لا توجد حالات تأخر مسجّلة في هذه الفترة."));
+    body.appendChild(card);
+    return;
+  }
+
+  /* --- ملخص --- */
+  const sum = el("div", "card");
+  sum.appendChild(el("div", "sec-title", "ملخص الفترة"));
+  const grid = el("div", "stat-grid");
+  [[S.total, "إجمالي حالات التأخر"], [S.studentsCount, "طالبًا تأخروا"],
+   [S.daysCount, "يومًا سُجّل فيه تأخر"], [avg(S.total, S.daysCount), "متوسط التأخر في اليوم"]]
+   .forEach(([v, l]) => { const b = el("div", "stat-box"); b.appendChild(el("b", null, String(v))); b.appendChild(el("span", null, l)); grid.appendChild(b); });
+  sum.appendChild(grid);
+  body.appendChild(sum);
+
+  /* --- الصفوف --- */
+  const gc = el("div", "card");
+  gc.appendChild(el("div", "sec-title", "🏫 التأخر حسب الصف الدراسي"));
+  const topG = S.grades[0];
+  const rateG = S.grades.filter(g => g.size).slice().sort((a,b) => (b.count/b.size) - (a.count/a.size))[0];
+  let ins = "أكثر الصفوف تأخرًا: " + topG.name + " (" + topG.count + " حالة، " + pct(topG.count, S.total) + "% من الإجمالي).";
+  if(rateG && rateG.name !== topG.name) ins += " وأعلاها متوسطًا لكل طالب: " + rateG.name + " (" + avg(rateG.count, rateG.size) + " حالة لكل طالب) لأن عدد طلابه أقل.";
+  gc.appendChild(el("div", "insight", ins));
+  const maxG = Math.max(1, topG.count);
+  S.grades.forEach((g, i) => {
+    gc.appendChild(barRow(i + 1, g.name,
+      g.late + " من " + g.size + " طالبًا تأخروا (" + pct(g.late, g.size) + "%) · متوسط " + avg(g.count, g.size) + " لكل طالب",
+      g.count + " حالة", g.count / maxG, i === 0 && g.count > 0));
+  });
+  body.appendChild(gc);
+
+  /* --- الفصول --- */
+  const cc = el("div", "card");
+  cc.appendChild(el("div", "sec-title", "🚪 الفصول الأكثر تأخرًا"));
+  const withLate = S.classes.filter(k => k.count > 0);
+  const topC = withLate[0];
+  cc.appendChild(el("div", "insight", "أكثر فصل تأخرًا: " + topC.label + " (" + topC.count + " حالة من " + topC.late + " طالبًا). عدد الفصول التي سُجّل فيها تأخر: " + withLate.length + " من " + S.classes.length + "."));
+  const maxC = Math.max(1, topC.count);
+  const shown = statsUI.showAllClasses ? S.classes : S.classes.slice(0, 10);
+  shown.forEach((k, i) => {
+    cc.appendChild(barRow(i + 1, k.label,
+      k.late + " من " + k.size + " طالبًا · متوسط " + avg(k.count, k.size) + " لكل طالب",
+      k.count + " حالة", k.count / maxC, i === 0 && k.count > 0));
+  });
+  if(S.classes.length > 10){
+    const mb = el("button", "more-btn", statsUI.showAllClasses ? "عرض أقل" : "عرض كل الفصول (" + S.classes.length + ")");
+    mb.type = "button";
+    mb.addEventListener("click", () => { statsUI.showAllClasses = !statsUI.showAllClasses; renderStats(); });
+    cc.appendChild(mb);
+  }
+  body.appendChild(cc);
+
+  /* --- كثيرو التأخر --- */
+  const sc = el("div", "card");
+  sc.appendChild(el("div", "sec-title", "🔁 الطلاب كثيرو التأخر"));
+  const fr = el("div", "fld");
+  fr.appendChild(el("label", "fld-label", "الحد الأدنى لعدد مرات التأخر"));
+  const sel = document.createElement("select");
+  [2, 3, 5, 10].forEach(n => {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n + " مرات فأكثر";
+    if(n === statsUI.minCount) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change", () => { statsUI.minCount = Number(sel.value); statsUI.showAllStudents = false; renderStats(); });
+  fr.appendChild(sel);
+  sc.appendChild(fr);
+  const list = S.students.filter(s => s.count >= statsUI.minCount);
+  if(list.length === 0){
+    sc.appendChild(el("div", "empty-note", "لا يوجد طلاب بهذا العدد من التأخر في هذه الفترة."));
+  }else{
+    const cl = {}; list.forEach(s => { cl[s.label] = (cl[s.label]||0) + 1; });
+    const topCl = Object.entries(cl).sort((a,b) => b[1]-a[1])[0];
+    sc.appendChild(el("div", "insight", list.length + " طالبًا تأخروا " + statsUI.minCount + " مرات فأكثر. أكثر فصل فيه كثيرو التأخر: " + topCl[0] + " (" + topCl[1] + " طالبًا)."));
+    const maxS = Math.max(1, list[0].count);
+    const shownS = statsUI.showAllStudents ? list : list.slice(0, 25);
+    shownS.forEach((s, i) => {
+      const lvl = s.count >= 10 ? ["مزمن", "red"] : (s.count >= 5 ? ["كثير", "red"] : ["متكرر", "amber"]);
+      const row = barRow(i + 1, s.name, null, s.count + " مرة", s.count / maxS, s.count >= 5, lvl[0], lvl[1]);
+      row.classList.add("tap");
+      row.querySelector(".nm").appendChild(el("small", null, s.label + " · آخر تأخر: " + fmtShortDate(s.dates[s.dates.length-1])));
+      const ds = el("div", "dates");
+      ds.style.display = "none";
+      s.dates.slice().reverse().forEach(d => ds.appendChild(el("span", null, fmtShortDate(d))));
+      row.appendChild(ds);
+      row.addEventListener("click", () => { ds.style.display = ds.style.display === "none" ? "flex" : "none"; });
+      sc.appendChild(row);
+    });
+    sc.appendChild(el("div", "hint", "اضغط على اسم الطالب لعرض تواريخ تأخره."));
+    if(list.length > 25){
+      const mb = el("button", "more-btn", statsUI.showAllStudents ? "عرض أقل" : "عرض الكل (" + list.length + ")");
+      mb.type = "button";
+      mb.style.marginTop = "8px";
+      mb.addEventListener("click", () => { statsUI.showAllStudents = !statsUI.showAllStudents; renderStats(); });
+      sc.appendChild(mb);
+    }
+  }
+  body.appendChild(sc);
+}
+
 /* ===================== التبويبات ===================== */
 function switchTab(name){
   $("tabEntry").classList.toggle("active", name==="entry");
   $("tabToday").classList.toggle("active", name==="today");
+  $("tabStats").classList.toggle("active", name==="stats");
   $("tabReport").classList.toggle("active", name==="report");
   $("viewEntry").style.display = name==="entry" ? "block" : "none";
   $("viewToday").style.display = name==="today" ? "block" : "none";
+  $("viewStats").style.display = name==="stats" ? "block" : "none";
   $("viewReport").style.display = name==="report" ? "block" : "none";
   $("fixBar").style.display = name==="entry" ? "block" : "none";
   if(name==="today") loadTodayLog();
+  if(name==="stats") loadStats();
   if(name==="report" && !$("inpReportDate").value) $("inpReportDate").value = localISO(new Date());
 }
 
@@ -1051,7 +1341,15 @@ document.addEventListener("visibilitychange", ()=>{
 $("btnSave").addEventListener("click", saveLateArrivals);
 $("tabEntry").addEventListener("click", ()=> switchTab("entry"));
 $("tabToday").addEventListener("click", ()=> switchTab("today"));
+$("tabStats").addEventListener("click", ()=> switchTab("stats"));
 $("tabReport").addEventListener("click", ()=> switchTab("report"));
+$("selStatsRange").addEventListener("change", ()=>{
+  $("statsCustom").style.display = $("selStatsRange").value === "custom" ? "block" : "none";
+  if($("selStatsRange").value !== "custom") loadStats();
+});
+$("inpStatsFrom").addEventListener("change", loadStats);
+$("inpStatsTo").addEventListener("change", loadStats);
+$("btnStatsRefresh").addEventListener("click", loadStats);
 $("btnPrintAll").addEventListener("click", printAllSheets);
 $("btnRefreshList").addEventListener("click", loadTodayLog);
 
