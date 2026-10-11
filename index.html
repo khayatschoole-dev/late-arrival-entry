@@ -211,6 +211,8 @@
   .dates{margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;}
   .dates span{font-size:11.5px; font-weight:700; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:3px 8px; color:var(--ink);}
   .more-btn{width:100%; padding:10px; border-radius:10px; border:1.5px dashed var(--teal); background:#fff; color:var(--teal-dark); font-family:inherit; font-size:13px; font-weight:700; cursor:pointer;}
+  .grp-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin:14px 0 8px; padding:8px 12px; border-radius:10px; background:var(--teal-dark); color:#fff; font-weight:800; font-size:14px;}
+  .grp-head .pill{background:rgba(255,255,255,.18); color:#fff;}
 </style>
 </head>
 <body>
@@ -1027,7 +1029,7 @@ async function printAllSheets(){
 
 /* ===================== الإحصائيات ===================== */
 let statsCache = null;           // نتيجة الحساب الأخيرة
-const statsUI = { showAllClasses:false, showAllStudents:false, minCount:3 };
+const statsUI = { showAllClasses:false, minCount:3, groupBy:"grade", expanded:new Set() };
 
 function el(tag, cls, text){
   const e = document.createElement(tag);
@@ -1219,15 +1221,30 @@ function renderStats(){
   const fr = el("div", "fld");
   fr.appendChild(el("label", "fld-label", "الحد الأدنى لعدد مرات التأخر"));
   const sel = document.createElement("select");
+  sel.id = "selChronicMin";
   [2, 3, 5, 10].forEach(n => {
     const o = document.createElement("option");
     o.value = n; o.textContent = n + " مرات فأكثر";
     if(n === statsUI.minCount) o.selected = true;
     sel.appendChild(o);
   });
-  sel.addEventListener("change", () => { statsUI.minCount = Number(sel.value); statsUI.showAllStudents = false; renderStats(); });
+  sel.addEventListener("change", () => { statsUI.minCount = Number(sel.value); statsUI.expanded = new Set(); renderStats(); });
   fr.appendChild(sel);
   sc.appendChild(fr);
+  const fg = el("div", "fld");
+  fg.appendChild(el("label", "fld-label", "طريقة العرض"));
+  const gsel = document.createElement("select");
+  gsel.id = "selChronicGroup";
+  [["grade", "مجمّعون حسب الصف (المرحلة)"], ["class", "مجمّعون حسب الفصل"], ["all", "الكل مرتبون بالأكثر تأخرًا"]].forEach(([v, t]) => {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = t;
+    if(v === statsUI.groupBy) o.selected = true;
+    gsel.appendChild(o);
+  });
+  gsel.addEventListener("change", () => { statsUI.groupBy = gsel.value; statsUI.expanded = new Set(); renderStats(); });
+  fg.appendChild(gsel);
+  sc.appendChild(fg);
+
   const list = S.students.filter(s => s.count >= statsUI.minCount);
   if(list.length === 0){
     sc.appendChild(el("div", "empty-note", "لا يوجد طلاب بهذا العدد من التأخر في هذه الفترة."));
@@ -1236,27 +1253,60 @@ function renderStats(){
     const topCl = Object.entries(cl).sort((a,b) => b[1]-a[1])[0];
     sc.appendChild(el("div", "insight", list.length + " طالبًا تأخروا " + statsUI.minCount + " مرات فأكثر. أكثر فصل فيه كثيرو التأخر: " + topCl[0] + " (" + topCl[1] + " طالبًا)."));
     const maxS = Math.max(1, list[0].count);
-    const shownS = statsUI.showAllStudents ? list : list.slice(0, 25);
-    shownS.forEach((s, i) => {
+
+    const buildStudentRow = (s, i) => {
       const lvl = s.count >= 10 ? ["مزمن", "red"] : (s.count >= 5 ? ["كثير", "red"] : ["متكرر", "amber"]);
       const row = barRow(i + 1, s.name, null, s.count + " مرة", s.count / maxS, s.count >= 5, lvl[0], lvl[1]);
       row.classList.add("tap");
-      row.querySelector(".nm").appendChild(el("small", null, s.label + " · آخر تأخر: " + fmtShortDate(s.dates[s.dates.length-1])));
+      const sub = statsUI.groupBy === "all" ? s.label + " · " : (statsUI.groupBy === "grade" ? "فصل " + s.sec + " · " : "");
+      row.querySelector(".nm").appendChild(el("small", null, sub + "آخر تأخر: " + fmtShortDate(s.dates[s.dates.length-1])));
       const ds = el("div", "dates");
       ds.style.display = "none";
       s.dates.slice().reverse().forEach(d => ds.appendChild(el("span", null, fmtShortDate(d))));
       row.appendChild(ds);
       row.addEventListener("click", () => { ds.style.display = ds.style.display === "none" ? "flex" : "none"; });
-      sc.appendChild(row);
-    });
-    sc.appendChild(el("div", "hint", "اضغط على اسم الطالب لعرض تواريخ تأخره."));
-    if(list.length > 25){
-      const mb = el("button", "more-btn", statsUI.showAllStudents ? "عرض أقل" : "عرض الكل (" + list.length + ")");
+      return row;
+    };
+    const moreBtn = (key, total, limit) => {
+      const open = statsUI.expanded.has(key);
+      const mb = el("button", "more-btn", open ? "عرض أقل" : "عرض الكل (" + total + ")");
       mb.type = "button";
-      mb.style.marginTop = "8px";
-      mb.addEventListener("click", () => { statsUI.showAllStudents = !statsUI.showAllStudents; renderStats(); });
-      sc.appendChild(mb);
+      mb.style.marginBottom = "8px";
+      mb.addEventListener("click", () => { if(open) statsUI.expanded.delete(key); else statsUI.expanded.add(key); renderStats(); });
+      return mb;
+    };
+
+    if(statsUI.groupBy === "all"){
+      const shownS = statsUI.expanded.has("all") ? list : list.slice(0, 25);
+      shownS.forEach((s, i) => sc.appendChild(buildStudentRow(s, i)));
+      if(list.length > 25) sc.appendChild(moreBtn("all", list.length, 25));
+    }else{
+      const gOrder = ["الأول متوسط","الثاني متوسط","الثالث متوسط"];
+      const groups = new Map();
+      list.forEach(s => {
+        const key = statsUI.groupBy === "grade" ? (s.grade || "غير محدد") : s.label;
+        if(!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(s);
+      });
+      const keys = [...groups.keys()].sort((a, b) => {
+        if(statsUI.groupBy === "grade") return gOrder.indexOf(a) - gOrder.indexOf(b);
+        const [ga, sa] = a.split(" - "), [gb, sb] = b.split(" - ");
+        return (gOrder.indexOf(ga) - gOrder.indexOf(gb)) || (Number(sa) - Number(sb));
+      });
+      const LIMIT = 15;
+      keys.forEach(key => {
+        const arr = groups.get(key);                       // مرتبة تنازليًا بعدد مرات التأخر
+        const totalLate = arr.reduce((a, s) => a + s.count, 0);
+        const head = el("div", "grp-head");
+        head.appendChild(el("span", null, key));
+        head.appendChild(el("span", "pill amber", arr.length + " طالبًا · " + totalLate + " حالة"));
+        sc.appendChild(head);
+        const shownG = statsUI.expanded.has(key) ? arr : arr.slice(0, LIMIT);
+        shownG.forEach((s, i) => sc.appendChild(buildStudentRow(s, i)));
+        if(arr.length > LIMIT) sc.appendChild(moreBtn(key, arr.length, LIMIT));
+      });
     }
+    sc.appendChild(el("div", "hint", "اضغط على اسم الطالب لعرض تواريخ تأخره."));
   }
   body.appendChild(sc);
 }
