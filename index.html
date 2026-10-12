@@ -150,6 +150,16 @@
   .sheet .sig div div{border-top:1px solid #0a1628; padding-top:5px; font-size:9.5px;}
   .sheet .ftr{margin-top:8px; padding-top:5px; border-top:1px solid #ccc; font-size:8px; color:#555; text-align:center;}
 
+  /* ===== تقرير الطلاب كثيري التأخر (يمتد على عدة صفحات عند الحاجة) ===== */
+  .sheet.flow{height:auto; overflow:visible; display:block; break-after:auto; page-break-after:auto; break-inside:auto;}
+  .sheet.flow table{table-layout:fixed;}
+  .sheet.flow th, .sheet.flow td{white-space:normal; line-height:1.4; padding:3px 5px; overflow:visible; text-overflow:clip; font-size:10px;}
+  .sheet.flow td.dts{font-size:8.5px;}
+  .sheet.flow thead{display:table-header-group;}
+  .sheet.flow tr{break-inside:avoid; page-break-inside:avoid;}
+  .sheet.flow tr.grp td{background:#dfe6ee; font-weight:800; font-size:10.5px; padding:4px 6px;}
+  .sheet.flow .sig{margin-top:26px; break-inside:avoid; page-break-inside:avoid;}
+
   @media print{
     @page{size:A4; margin:10mm;}
     html,body{background:#fff !important; padding:0 !important; margin:0 !important; min-height:0 !important;}
@@ -1157,6 +1167,87 @@ function barRow(rank, title, sub, numText, ratio, hot, pillText, pillCls){
   return row;
 }
 
+/* ===== طباعة تقرير الطلاب كثيري التأخر (يطابق إعدادات الشاشة: الحد الأدنى + طريقة العرض + الفترة) ===== */
+function chronicReportHTML(){
+  const S = statsCache;
+  const rg = statsRange();
+  const list = S.students.filter(s => s.count >= statsUI.minCount);
+  const totalCases = list.reduce((a, s) => a + s.count, 0);
+  const gOrder = ["الأول متوسط","الثاني متوسط","الثالث متوسط"];
+
+  const mkRow = (s, i) => {
+    const ds = s.dates.map(d => fmtDMY(d).slice(0,5));
+    const shown = ds.length > 14 ? ds.slice(-14).join(" ، ") + " ... (+" + (ds.length-14) + " أقدم)" : ds.join(" ، ");
+    return '<tr><td class="c">' + (i+1) + '</td><td><b>' + escHtml(s.name) + '</b></td>' +
+      '<td class="c">' + escHtml(s.label) + '</td>' +
+      '<td class="c" style="font-weight:800;' + (s.count >= 5 ? 'color:#c0392b;' : '') + '">' + s.count + '</td>' +
+      '<td class="dts">' + shown + '</td></tr>';
+  };
+
+  let body = "";
+  if(statsUI.groupBy === "all"){
+    body = list.map(mkRow).join("");
+  }else{
+    const groups = new Map();
+    list.forEach(s => {
+      const key = statsUI.groupBy === "grade" ? (s.grade || "غير محدد") : s.label;
+      if(!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    });
+    const keys = [...groups.keys()].sort((a, b) => {
+      if(statsUI.groupBy === "grade") return gOrder.indexOf(a) - gOrder.indexOf(b);
+      const [ga, sa] = a.split(" - "), [gb, sb] = b.split(" - ");
+      return (gOrder.indexOf(ga) - gOrder.indexOf(gb)) || (Number(sa) - Number(sb));
+    });
+    keys.forEach(key => {
+      const arr = groups.get(key);
+      const tl = arr.reduce((a, s) => a + s.count, 0);
+      body += '<tr class="grp"><td colspan="5">' + escHtml(key) + ' — ' + arr.length + ' طالبًا · ' + tl + ' حالة</td></tr>';
+      body += arr.map(mkRow).join("");
+    });
+  }
+  const viewLbl = statsUI.groupBy === "grade" ? "حسب الصف" : (statsUI.groupBy === "class" ? "حسب الفصل" : "ترتيب عام");
+
+  return '<div class="sheet flow">' +
+    '<div class="hdr">' +
+      '<div class="lg"><img src="data:image/png;base64,' + MOE_LOGO_B64 + '" alt="شعار وزارة التعليم"></div>' +
+      '<div class="tx">' +
+        '<div style="font-size:12.5px;font-weight:700;">المملكة العربية السعودية</div>' +
+        '<div style="font-size:11.5px;font-weight:700;">وزارة التعليم</div>' +
+        '<div style="font-size:11px;margin-top:2px;">مدرسة الشيخ عبدالله خياط المتوسطة</div>' +
+      '</div>' +
+      '<div class="lg"></div>' +
+    '</div>' +
+    '<div class="ttl"><span>تقرير الطلاب الأكثر تأخرًا صباحيًا</span></div>' +
+    '<div class="info">' +
+      '<div><b>الفترة:</b> ' + escHtml(rg.label) + '</div>' +
+      '<div><b>الحد الأدنى:</b> ' + statsUI.minCount + ' مرات فأكثر — ' + viewLbl + '</div>' +
+      '<div><b>الطلاب:</b> ' + list.length + ' — <b>إجمالي الحالات:</b> ' + totalCases + '</div>' +
+    '</div>' +
+    '<table>' +
+      '<colgroup><col style="width:6%"><col><col style="width:17%"><col style="width:11%"><col style="width:30%"></colgroup>' +
+      '<thead><tr><th class="c">م</th><th>اسم الطالب</th><th class="c">الفصل</th><th class="c">مرات التأخر</th><th>تواريخ التأخر</th></tr></thead>' +
+      '<tbody>' + body + '</tbody>' +
+    '</table>' +
+    '<div class="sig">' +
+      '<div><div>توقيع وكيل/ة شؤون الطلاب</div></div>' +
+      '<div><div>اعتماد مدير/ة المدرسة</div></div>' +
+    '</div>' +
+    '<div class="ftr">هذا التقرير معد للاستخدام الرسمي الداخلي في المدرسة — نظام التأخر الصباحي</div>' +
+  '</div>';
+}
+
+async function printChronicReport(){
+  const S = statsCache;
+  if(!S || !S.students.some(s => s.count >= statsUI.minCount)){
+    toast("لا يوجد طلاب بهذا الحد في الفترة المحددة", true);
+    return;
+  }
+  $("printArea").innerHTML = chronicReportHTML();
+  await new Promise(r => setTimeout(r, 300));
+  window.print();
+}
+
 function renderStats(){
   const S = statsCache, body = $("statsBody");
   body.innerHTML = "";
@@ -1244,6 +1335,11 @@ function renderStats(){
   gsel.addEventListener("change", () => { statsUI.groupBy = gsel.value; statsUI.expanded = new Set(); renderStats(); });
   fg.appendChild(gsel);
   sc.appendChild(fg);
+  const pbtn = el("button", "ghostbtn", "🖨️ طباعة تقرير الطلاب الأكثر تأخرًا");
+  pbtn.type = "button";
+  pbtn.style.cssText = "width:100%; flex:none; margin-bottom:12px; padding:11px;";
+  pbtn.addEventListener("click", printChronicReport);
+  sc.appendChild(pbtn);
 
   const list = S.students.filter(s => s.count >= statsUI.minCount);
   if(list.length === 0){
