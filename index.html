@@ -332,6 +332,7 @@
     <div class="card">
       <div class="toolbar">
         <button class="ghostbtn" type="button" id="btnRefreshList" style="flex:2;">↻ تحديث السجل</button>
+        <button class="ghostbtn" type="button" id="btnPrintToday" style="flex:3;">🖨️ طباعة التقرير اليومي</button>
       </div>
       <div class="hint" style="margin-bottom:10px;">جميع حالات التأخر الصباحي المسجَّلة اليوم عبر التطبيق، الأحدث أولًا.</div>
       <div id="todayList" class="mine-list"></div>
@@ -375,6 +376,18 @@
       </div>
       <button class="primary" id="btnPrintAll" type="button">🖨️ طباعة كشوف كل الفصول</button>
       <div class="save-hint" id="reportHint">يُجلب التأخر المسجَّل في التاريخ المختار تلقائيًا قبل الطباعة</div>
+    </div>
+
+    <div class="card">
+      <label class="fld-label">📄 تقرير التأخر الصباحي اليومي</label>
+      <div class="hint" style="margin-bottom:12px;">
+        يطبع قائمة بالطلاب المتأخرين في اليوم المحدد مجمّعين حسب الفصل، مع وقت تسجيل التأخر واسم من سجّله وأي ملاحظات.
+      </div>
+      <div class="fld">
+        <label class="fld-label">التاريخ</label>
+        <input type="date" id="inpDailyDate">
+      </div>
+      <button class="primary" id="btnPrintDaily" type="button">🖨️ طباعة التقرير اليومي</button>
     </div>
   </section>
 </main>
@@ -1037,6 +1050,106 @@ async function printAllSheets(){
 }
 
 
+/* ===================== تقرير التأخر الصباحي اليومي ===================== */
+async function fetchDailyLate(iso){
+  const url = SUPABASE_URL + "/rest/v1/late_arrivals?vdate=eq." + encodeURIComponent(iso)
+    + "&select=student_id,student_name,class,entered_by,notes,created_at&order=created_at.asc&limit=2000";
+  const res = await fetch(url, { headers: HDRS });
+  if(!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+function timeLabel(ts){
+  if(!ts) return "—";
+  const d = new Date(ts);
+  if(isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("ar-SA-u-nu-latn", { hour:"2-digit", minute:"2-digit" });
+}
+
+function dailyReportHTML(iso, rows){
+  const gOrder = ["الأول متوسط","الثاني متوسط","الثالث متوسط"];
+  const d = new Date(iso + "T12:00:00");
+  const dayName = ARABIC_DAYS[d.getDay()];
+
+  const groups = new Map();
+  rows.forEach(r => {
+    const key = (r.class || "").trim() || "غير محدد";
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  });
+  const keys = [...groups.keys()].sort((a, b) => {
+    const [ga, sa] = a.split(" - "), [gb, sb] = b.split(" - ");
+    const ia = gOrder.indexOf(ga), ib = gOrder.indexOf(gb);
+    return ((ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)) || (Number(sa) - Number(sb)) || a.localeCompare(b, "ar");
+  });
+
+  const gradeCount = {};
+  rows.forEach(r => { const g = (r.class || "").split(" - ")[0].trim(); if(g) gradeCount[g] = (gradeCount[g] || 0) + 1; });
+  const gradeLine = gOrder.map(g => g + ": <b>" + (gradeCount[g] || 0) + "</b>").join(" &nbsp;·&nbsp; ");
+
+  let n = 0, body = "";
+  keys.forEach(k => {
+    const arr = groups.get(k);
+    body += '<tr class="grp"><td colspan="5">' + escHtml(k) + ' — ' + arr.length + ' ' + (arr.length === 1 ? 'طالب' : 'طلاب') + '</td></tr>';
+    arr.forEach(r => {
+      n++;
+      body += '<tr><td class="c">' + n + '</td><td><b>' + escHtml(r.student_name || "") + '</b></td>' +
+        '<td class="c">' + timeLabel(r.created_at) + '</td>' +
+        '<td class="c">' + escHtml(r.entered_by || "—") + '</td>' +
+        '<td>' + escHtml(r.notes || "") + '</td></tr>';
+    });
+  });
+  if(!rows.length){
+    body = '<tr><td colspan="5" class="c" style="padding:18px 0;font-weight:700;">لا توجد حالات تأخر صباحي مسجّلة في هذا اليوم</td></tr>';
+  }
+
+  return '<div class="sheet flow">' +
+    '<div class="hdr">' +
+      '<div class="lg"><img src="data:image/png;base64,' + MOE_LOGO_B64 + '" alt="شعار وزارة التعليم"></div>' +
+      '<div class="tx">' +
+        '<div style="font-size:12.5px;font-weight:700;">المملكة العربية السعودية</div>' +
+        '<div style="font-size:11.5px;font-weight:700;">وزارة التعليم</div>' +
+        '<div style="font-size:11px;margin-top:2px;">مدرسة الشيخ عبدالله خياط المتوسطة</div>' +
+      '</div>' +
+      '<div class="lg"></div>' +
+    '</div>' +
+    '<div class="ttl"><span>تقرير التأخر الصباحي اليومي</span></div>' +
+    '<div class="info">' +
+      '<div><b>التاريخ:</b> ' + fmtDMY(iso) + ' (' + dayName + ')</div>' +
+      '<div><b>إجمالي المتأخرين:</b> ' + rows.length + '</div>' +
+      '<div><b>الفصول التي سُجّل فيها تأخر:</b> ' + (rows.length ? keys.length : 0) + '</div>' +
+    '</div>' +
+    '<div class="info" style="justify-content:center;border:1px solid #ccc;padding:5px 8px;margin-bottom:10px;">' + gradeLine + '</div>' +
+    '<table>' +
+      '<colgroup><col style="width:6%"><col><col style="width:13%"><col style="width:18%"><col style="width:25%"></colgroup>' +
+      '<thead><tr><th class="c">م</th><th>اسم الطالب</th><th class="c">وقت التسجيل</th><th class="c">سُجّل بواسطة</th><th>ملاحظات</th></tr></thead>' +
+      '<tbody>' + body + '</tbody>' +
+    '</table>' +
+    '<div class="sig">' +
+      '<div><div>توقيع وكيل/ة شؤون الطلاب</div></div>' +
+      '<div><div>اعتماد مدير/ة المدرسة</div></div>' +
+    '</div>' +
+    '<div class="ftr">هذا التقرير معد للاستخدام الرسمي الداخلي في المدرسة — نظام التأخر الصباحي</div>' +
+  '</div>';
+}
+
+async function printDailyReport(iso, btn){
+  if(!iso){ toast("اختر التاريخ أولًا", true); return; }
+  const prev = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.textContent = "جارٍ تجهيز التقرير..."; }
+  try{
+    const rows = await fetchDailyLate(iso);
+    $("printArea").innerHTML = dailyReportHTML(iso, rows);
+    await new Promise(r => setTimeout(r, 300));
+    window.print();
+  }catch(err){
+    console.error(err);
+    toast("تعذّر جلب بيانات التأخر، تحقق من الاتصال وحاول مجددًا", true);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = prev; }
+  }
+}
+
 /* ===================== الإحصائيات ===================== */
 let statsCache = null;           // نتيجة الحساب الأخيرة
 const statsUI = { showAllClasses:false, minCount:3, groupBy:"grade", expanded:new Set() };
@@ -1421,6 +1534,7 @@ function switchTab(name){
   if(name==="today") loadTodayLog();
   if(name==="stats") loadStats();
   if(name==="report" && !$("inpReportDate").value) $("inpReportDate").value = localISO(new Date());
+  if(name==="report" && !$("inpDailyDate").value) $("inpDailyDate").value = localISO(new Date());
 }
 
 /* ===================== بوابة الدخول ===================== */
@@ -1497,6 +1611,8 @@ $("inpStatsFrom").addEventListener("change", loadStats);
 $("inpStatsTo").addEventListener("change", loadStats);
 $("btnStatsRefresh").addEventListener("click", loadStats);
 $("btnPrintAll").addEventListener("click", printAllSheets);
+$("btnPrintDaily").addEventListener("click", ()=> printDailyReport($("inpDailyDate").value, $("btnPrintDaily")));
+$("btnPrintToday").addEventListener("click", ()=> printDailyReport(todayInfo().iso, $("btnPrintToday")));
 $("btnRefreshList").addEventListener("click", loadTodayLog);
 
 /* ===================== التهيئة ===================== */
