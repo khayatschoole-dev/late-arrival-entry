@@ -381,7 +381,7 @@
     <div class="card">
       <label class="fld-label">📄 تقرير التأخر الصباحي اليومي</label>
       <div class="hint" style="margin-bottom:12px;">
-        يطبع قائمة بالطلاب المتأخرين في اليوم المحدد مجمّعين حسب الفصل، مع وقت تسجيل التأخر واسم من سجّله وأي ملاحظات.
+        يطبع قائمة بالطلاب المتأخرين في اليوم المحدد مجمّعين حسب الفصل، مع وقت تسجيل التأخر وأي ملاحظات.
       </div>
       <div class="fld">
         <label class="fld-label">التاريخ</label>
@@ -1053,7 +1053,7 @@ async function printAllSheets(){
 /* ===================== تقرير التأخر الصباحي اليومي ===================== */
 async function fetchDailyLate(iso){
   const url = SUPABASE_URL + "/rest/v1/late_arrivals?vdate=eq." + encodeURIComponent(iso)
-    + "&select=student_id,student_name,class,entered_by,notes,created_at&order=created_at.asc&limit=2000";
+    + "&select=student_id,student_name,class,notes,created_at&order=created_at.asc&limit=2000";
   const res = await fetch(url, { headers: HDRS });
   if(!res.ok) throw new Error(await res.text());
   return res.json();
@@ -1090,17 +1090,16 @@ function dailyReportHTML(iso, rows){
   let n = 0, body = "";
   keys.forEach(k => {
     const arr = groups.get(k);
-    body += '<tr class="grp"><td colspan="5">' + escHtml(k) + ' — ' + arr.length + ' ' + (arr.length === 1 ? 'طالب' : 'طلاب') + '</td></tr>';
+    body += '<tr class="grp"><td colspan="4">' + escHtml(k) + ' — ' + arr.length + ' ' + (arr.length === 1 ? 'طالب' : 'طلاب') + '</td></tr>';
     arr.forEach(r => {
       n++;
       body += '<tr><td class="c">' + n + '</td><td><b>' + escHtml(r.student_name || "") + '</b></td>' +
         '<td class="c">' + timeLabel(r.created_at) + '</td>' +
-        '<td class="c">' + escHtml(r.entered_by || "—") + '</td>' +
         '<td>' + escHtml(r.notes || "") + '</td></tr>';
     });
   });
   if(!rows.length){
-    body = '<tr><td colspan="5" class="c" style="padding:18px 0;font-weight:700;">لا توجد حالات تأخر صباحي مسجّلة في هذا اليوم</td></tr>';
+    body = '<tr><td colspan="4" class="c" style="padding:18px 0;font-weight:700;">لا توجد حالات تأخر صباحي مسجّلة في هذا اليوم</td></tr>';
   }
 
   return '<div class="sheet flow">' +
@@ -1121,8 +1120,8 @@ function dailyReportHTML(iso, rows){
     '</div>' +
     '<div class="info" style="justify-content:center;border:1px solid #ccc;padding:5px 8px;margin-bottom:10px;">' + gradeLine + '</div>' +
     '<table>' +
-      '<colgroup><col style="width:6%"><col><col style="width:13%"><col style="width:18%"><col style="width:25%"></colgroup>' +
-      '<thead><tr><th class="c">م</th><th>اسم الطالب</th><th class="c">وقت التسجيل</th><th class="c">سُجّل بواسطة</th><th>ملاحظات</th></tr></thead>' +
+      '<colgroup><col style="width:6%"><col><col style="width:15%"><col style="width:30%"></colgroup>' +
+      '<thead><tr><th class="c">م</th><th>اسم الطالب</th><th class="c">وقت التسجيل</th><th>ملاحظات</th></tr></thead>' +
       '<tbody>' + body + '</tbody>' +
     '</table>' +
     '<div class="sig">' +
