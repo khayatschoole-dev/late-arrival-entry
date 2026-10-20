@@ -1151,7 +1151,7 @@ async function printDailyReport(iso, btn){
 
 /* ===================== الإحصائيات ===================== */
 let statsCache = null;           // نتيجة الحساب الأخيرة
-const statsUI = { showAllClasses:false, minCount:3, groupBy:"grade", expanded:new Set() };
+const statsUI = { showAllClasses:false, minCount:3, groupBy:"grade", gradeFilter:"all", expanded:new Set() };
 
 function el(tag, cls, text){
   const e = document.createElement(tag);
@@ -1280,10 +1280,16 @@ function barRow(rank, title, sub, numText, ratio, hot, pillText, pillCls){
 }
 
 /* ===== طباعة تقرير الطلاب كثيري التأخر (يطابق إعدادات الشاشة: الحد الأدنى + طريقة العرض + الفترة) ===== */
+function chronicList(){
+  if(!statsCache) return [];
+  return statsCache.students.filter(s => s.count >= statsUI.minCount
+    && (statsUI.gradeFilter === "all" || s.grade === statsUI.gradeFilter));
+}
+
 function chronicReportHTML(){
   const S = statsCache;
   const rg = statsRange();
-  const list = S.students.filter(s => s.count >= statsUI.minCount);
+  const list = chronicList();
   const totalCases = list.reduce((a, s) => a + s.count, 0);
   const gOrder = ["الأول متوسط","الثاني متوسط","الثالث متوسط"];
 
@@ -1330,9 +1336,10 @@ function chronicReportHTML(){
       '</div>' +
       '<div class="lg"></div>' +
     '</div>' +
-    '<div class="ttl"><span>تقرير الطلاب الأكثر تأخرًا صباحيًا</span></div>' +
+    '<div class="ttl"><span>تقرير الطلاب الأكثر تأخرًا صباحيًا' + (statsUI.gradeFilter === "all" ? "" : " — " + escHtml(statsUI.gradeFilter)) + '</span></div>' +
     '<div class="info">' +
       '<div><b>الفترة:</b> ' + escHtml(rg.label) + '</div>' +
+      '<div><b>الصف:</b> ' + (statsUI.gradeFilter === "all" ? "جميع الصفوف" : escHtml(statsUI.gradeFilter)) + '</div>' +
       '<div><b>الحد الأدنى:</b> ' + statsUI.minCount + ' مرات فأكثر — ' + viewLbl + '</div>' +
       '<div><b>الطلاب:</b> ' + list.length + ' — <b>إجمالي الحالات:</b> ' + totalCases + '</div>' +
     '</div>' +
@@ -1351,8 +1358,8 @@ function chronicReportHTML(){
 
 async function printChronicReport(){
   const S = statsCache;
-  if(!S || !S.students.some(s => s.count >= statsUI.minCount)){
-    toast("لا يوجد طلاب بهذا الحد في الفترة المحددة", true);
+  if(!S || chronicList().length === 0){
+    toast(statsUI.gradeFilter === "all" ? "لا يوجد طلاب بهذا الحد في الفترة المحددة" : "لا يوجد طلاب بهذا الحد في " + statsUI.gradeFilter, true);
     return;
   }
   $("printArea").innerHTML = chronicReportHTML();
@@ -1447,13 +1454,26 @@ function renderStats(){
   gsel.addEventListener("change", () => { statsUI.groupBy = gsel.value; statsUI.expanded = new Set(); renderStats(); });
   fg.appendChild(gsel);
   sc.appendChild(fg);
-  const pbtn = el("button", "ghostbtn", "🖨️ طباعة تقرير الطلاب الأكثر تأخرًا");
+  const fgr = el("div", "fld");
+  fgr.appendChild(el("label", "fld-label", "الصف المطلوب (للعرض والطباعة)"));
+  const grsel = document.createElement("select");
+  grsel.id = "selChronicGrade";
+  [["all", "جميع الصفوف"], ["الأول متوسط", "الأول متوسط"], ["الثاني متوسط", "الثاني متوسط"], ["الثالث متوسط", "الثالث متوسط"]].forEach(([v, t]) => {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = t;
+    if(v === statsUI.gradeFilter) o.selected = true;
+    grsel.appendChild(o);
+  });
+  grsel.addEventListener("change", () => { statsUI.gradeFilter = grsel.value; statsUI.expanded = new Set(); renderStats(); });
+  fgr.appendChild(grsel);
+  sc.appendChild(fgr);
+  const pbtn = el("button", "ghostbtn", statsUI.gradeFilter === "all" ? "🖨️ طباعة تقرير الطلاب الأكثر تأخرًا (كل الصفوف)" : "🖨️ طباعة تقرير " + statsUI.gradeFilter);
   pbtn.type = "button";
   pbtn.style.cssText = "width:100%; flex:none; margin-bottom:12px; padding:11px;";
   pbtn.addEventListener("click", printChronicReport);
   sc.appendChild(pbtn);
 
-  const list = S.students.filter(s => s.count >= statsUI.minCount);
+  const list = chronicList();
   if(list.length === 0){
     sc.appendChild(el("div", "empty-note", "لا يوجد طلاب بهذا العدد من التأخر في هذه الفترة."));
   }else{
