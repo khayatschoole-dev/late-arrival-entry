@@ -389,6 +389,18 @@
       </div>
       <button class="primary" id="btnPrintDaily" type="button">🖨️ طباعة التقرير اليومي</button>
     </div>
+
+    <div class="card">
+      <label class="fld-label">📥 استيراد التأخر من نظام رصد الغياب الجديد</label>
+      <div class="hint" style="margin-bottom:12px;">
+        اختر ملف CSV المُصدَّر من النظام الجديد (تقارير الفصول ← تصدير التأخر للنظام القديم). يُطابَق كل طالب بالاسم والفصل، ولا يُكرَّر من سُجّل مسبقًا في نفس اليوم.
+      </div>
+      <div class="fld">
+        <input type="file" id="inpImportFile" accept=".csv,text/csv">
+      </div>
+      <button class="primary" id="btnImport" type="button">📥 استيراد وتسجيل</button>
+      <div class="save-hint" id="importHint"></div>
+    </div>
   </section>
 </main>
 
@@ -1633,6 +1645,92 @@ $("btnPrintAll").addEventListener("click", printAllSheets);
 $("btnPrintDaily").addEventListener("click", ()=> printDailyReport($("inpDailyDate").value, $("btnPrintDaily")));
 $("btnPrintToday").addEventListener("click", ()=> printDailyReport(todayInfo().iso, $("btnPrintToday")));
 $("btnRefreshList").addEventListener("click", loadTodayLog);
+
+/* ===================== استيراد من النظام الجديد (CSV) ===================== */
+function parseCSV(text){
+  const rows = []; let row = [], cur = "", q = false;
+  text = text.replace(/^\ufeff/, "");
+  for(let i = 0; i < text.length; i++){
+    const c = text[i];
+    if(q){
+      if(c === '"'){ if(text[i+1] === '"'){ cur += '"'; i++; } else q = false; }
+      else cur += c;
+    }else if(c === '"') q = true;
+    else if(c === ","){ row.push(cur); cur = ""; }
+    else if(c === "\n" || c === "\r"){
+      if(c === "\r" && text[i+1] === "\n") i++;
+      row.push(cur); cur = ""; if(row.some(x => x.trim())) rows.push(row); row = [];
+    }else cur += c;
+  }
+  row.push(cur); if(row.some(x => x.trim())) rows.push(row);
+  return rows;
+}
+async function importFromNew(){
+  const f = $("inpImportFile").files[0];
+  const hint = $("importHint"), btn = $("btnImport");
+  if(!f){ toast("اختر ملف CSV أولًا", true); return; }
+  btn.disabled = true; btn.textContent = "جارٍ الاستيراد...";
+  try{
+    const text = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => no(new Error("تعذّر قراءة الملف")); fr.readAsText(f, "utf-8"); });
+    const rows = parseCSV(text);
+    const head = (rows.shift() || []).map(h => h.trim());
+    const col = n => head.indexOf(n);
+    const ci = { d: col("التاريخ"), n: col("الاسم"), g: col("الصف"), s: col("الفصل"), t: col("وقت الوصول"), b: col("سجّله") };
+    if(ci.d < 0 || ci.n < 0 || ci.g < 0 || ci.s < 0) throw new Error("الملف ليس بصيغة التصدير من النظام الجديد");
+    const nn = x => normAr(x).replace(/[^\u0621-\u064Aa-z0-9]/g, "");
+    const byKey = new Map(), byName = new Map();
+    STUDENT_IDX.forEach(s => {
+      byKey.set(nn(s.name) + "|" + s.grade + "|" + s.sec, s);
+      const k = nn(s.name); byName.set(k, (byName.get(k) || []).concat([s]));
+    });
+    const recs = rows.filter(r => /^\d{4}-\d{2}-\d{2}$/.test((r[ci.d] || "").trim()));
+    if(!recs.length) throw new Error("لا توجد سجلات في الملف");
+    const dates = recs.map(r => r[ci.d].trim()).sort();
+    const from = dates[0], to = dates[dates.length - 1];
+    // الموجود مسبقًا في القاعدة لنفس الفترة (منع التكرار)
+    const res = await fetch(SUPABASE_URL + "/rest/v1/late_arrivals?select=student_id,vdate&vdate=gte." + from + "&vdate=lte." + to + "&limit=10000", { headers: HDRS });
+    if(!res.ok) throw new Error("تعذّر الاتصال بقاعدة البيانات");
+    const have = new Set((await res.json()).map(x => nid(x.student_id) + "|" + x.vdate));
+    const payload = [], missing = []; let dup = 0;
+    recs.forEach(r => {
+      const name = r[ci.n].trim(), grade = r[ci.g].trim(), sec = String(r[ci.s]).trim(), date = r[ci.d].trim();
+      let s = byKey.get(nn(name) + "|" + grade + "|" + sec);
+      if(!s){ const l = byName.get(nn(name)); if(l && l.length === 1) s = l[0]; }
+      if(!s){ missing.push(name + " (" + grade + " - " + sec + ")"); return; }
+      const k = nid(s.sid) + "|" + date;
+      if(have.has(k)){ dup++; return; }
+      have.add(k);
+      const [y, m, d] = date.split("-").map(Number);
+      const time = ci.t >= 0 ? (r[ci.t] || "").trim() : "";
+      payload.push({
+        student_name: s.name, class: s.grade + " - " + s.sec, student_id: s.sid,
+        vdate: date, vday: ARABIC_DAYS[new Date(y, m - 1, d).getDay()],
+        notes: "مستورد من النظام الجديد" + (time ? " — وقت الوصول " + time : ""),
+        entered_by: (ci.b >= 0 && r[ci.b].trim()) || "النظام الجديد"
+      });
+    });
+    for(let i = 0; i < payload.length; i += 200){
+      const ins = await fetch(SUPABASE_URL + "/rest/v1/late_arrivals", {
+        method: "POST",
+        headers: Object.assign({ "Content-Type": "application/json", "Prefer": "return=minimal" }, HDRS),
+        body: JSON.stringify(payload.slice(i, i + 200))
+      });
+      if(!ins.ok) throw new Error((await ins.text()) || ins.statusText);
+    }
+    hint.textContent = "سُجِّل " + payload.length + " • مسجّل مسبقًا " + dup + " • غير مطابق " + missing.length +
+      (missing.length ? ": " + missing.slice(0, 15).join("، ") + (missing.length > 15 ? "…" : "") : "");
+    toast("تم استيراد " + nStudents(payload.length) + " ✓");
+    $("inpImportFile").value = "";
+    await loadTodayMap(); renderAll();
+  }catch(err){
+    console.error(err);
+    hint.textContent = "تعذّر الاستيراد: " + err.message;
+    toast("تعذّر الاستيراد", true);
+  }finally{
+    btn.disabled = false; btn.textContent = "📥 استيراد وتسجيل";
+  }
+}
+$("btnImport").addEventListener("click", importFromNew);
 
 /* ===================== التهيئة ===================== */
 buildIndex();
