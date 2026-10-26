@@ -1705,7 +1705,7 @@ async function importFromNew(){
       payload.push({
         student_name: s.name, class: s.grade + " - " + s.sec, student_id: s.sid,
         vdate: date, vday: ARABIC_DAYS[new Date(y, m - 1, d).getDay()],
-        notes: "مستورد من النظام الجديد" + (time ? " — وقت الوصول " + time : ""),
+        notes: time ? "وقت الوصول " + time : null,
         entered_by: (ci.b >= 0 && r[ci.b].trim()) || "النظام الجديد"
       });
     });
